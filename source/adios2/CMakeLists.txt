@@ -139,22 +139,7 @@ if (ADIOS2_HAVE_Derived_Variable)
   find_package(BISON "3.8.2")
   find_package(FLEX)
 
-  if(NOT BISON_FOUND OR NOT FLEX_FOUND OR (NOT BISON_VERSION VERSION_GREATER_EQUAL "3.8.2"))
-    include(ADIOSBisonFlexSub)
-    SETUP_ADIOS_BISON_FLEX_SUB()
-  else()
-    BISON_TARGET(MyParser
-      toolkit/derived/parser/parser.y
-      ${CMAKE_CURRENT_BINARY_DIR}/parser.cpp
-      COMPILE_FLAGS "-o parser.cpp --header=parser.h"
-      DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.h)
-    FLEX_TARGET(MyScanner
-      toolkit/derived/parser/lexer.l
-      COMPILE_FLAGS "-o lexer.cpp --header-file=lexer.h" 
-      ${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp
-      DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/lexer.h)
-    ADD_FLEX_BISON_DEPENDENCY(MyScanner MyParser)
-  endif()
+
   if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp PROPERTIES COMPILE_FLAGS -Wno-sign-compare)
   elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
