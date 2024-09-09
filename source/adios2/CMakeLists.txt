@@ -138,7 +138,8 @@ if (ADIOS2_HAVE_Derived_Variable)
   				   INCLUDE_DIRECTORIES "$<BUILD_INTERFACE:${ADIOS2_SOURCE_DIR}/source/adios2/toolkit/derived/parser>;$<BUILD_INTERFACE:${ADIOS2_BINARY_DIR}/source/adios2>")
   find_package(BISON "3.8.2")
   find_package(FLEX)
-
+  include(ADIOSBisonFlexSub)
+  SETUP_ADIOS_BISON_FLEX_SUB()
 
   if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp PROPERTIES COMPILE_FLAGS -Wno-sign-compare)
