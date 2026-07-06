@@ -22,6 +22,9 @@ DerivedData PowFunc(ExprData input);
 DerivedData MagnitudeFunc(ExprData input);
 DerivedData Cross3DFunc(ExprData input);
 DerivedData Curl3DFunc(ExprData input);
+DerivedData GradientFunc(ExprData input);
+DerivedData MeanFunc(ExprData input);
+DerivedData SpectrumFunc(ExprData input);
 
 std::tuple<Dims, Dims, Dims> SameDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
                                           bool constants);
@@ -31,6 +34,12 @@ std::tuple<Dims, Dims, Dims> Cross3DDimsFunc(std::vector<std::tuple<Dims, Dims, 
                                              bool constants);
 std::tuple<Dims, Dims, Dims> CurlDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
                                           bool constants);
+std::tuple<Dims, Dims, Dims> GradDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                          bool constants);
+std::tuple<Dims, Dims, Dims> MeanDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                          bool constants);
+std::tuple<Dims, Dims, Dims> SpectrumDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                              bool constants);
 
 DataType SameTypeFunc(DataType input);
 DataType FloatTypeFunc(DataType input);

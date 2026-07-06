@@ -5,7 +5,10 @@
 #include "adios2/helper/adiosFunctions.h"
 #include "adios2/helper/adiosLog.h"
 #include <adios2-perfstubs-interface.h>
+#include <algorithm>
 #include <cmath>
+#include <complex>
+#include <vector>
 
 namespace adios2
 {
@@ -138,6 +141,181 @@ T *ApplyCurl(const T *input1, const T *input2, const T *input3, const size_t dim
         }
     }
     return data;
+}
+
+/*
+ * Gradient of a 3D scalar field, 2nd-order central differences in INDEX space
+ * (grid spacing = 1), one-sided (clamped) at the domain edges -- exactly the
+ * same discretisation convention as ApplyCurl above.
+ *   axis < 0  : full gradient, output layout [i,j,k,component] (component last,
+ *               contiguous) with component 0,1,2 = d/d(dim0), d/d(dim1), d/d(dim2)
+ *   axis 0..2 : single partial derivative d(input)/d(dim=axis), scalar field
+ */
+template <class T>
+T *ApplyGradient(const T *input, const size_t dims[3], int axis)
+{
+    size_t dataSize = dims[0] * dims[1] * dims[2];
+    int ncomp = (axis < 0) ? 3 : 1;
+    T *data = (T *)malloc(dataSize * sizeof(T) * ncomp);
+    if (data == nullptr)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "ApplyGradient",
+                                             "Error allocating memory for the derived variable");
+    size_t index = 0;
+    for (int i = 0; i < (int)dims[0]; ++i)
+    {
+        size_t prev_i = std::max(0, i - 1), next_i = std::min((int)dims[0] - 1, i + 1);
+        for (int j = 0; j < (int)dims[1]; ++j)
+        {
+            size_t prev_j = std::max(0, j - 1), next_j = std::min((int)dims[1] - 1, j + 1);
+            for (int k = 0; k < (int)dims[2]; ++k)
+            {
+                size_t prev_k = std::max(0, k - 1), next_k = std::min((int)dims[2] - 1, k + 1);
+                T d0 = (input[returnIndex(next_i, j, k, dims)] -
+                        input[returnIndex(prev_i, j, k, dims)]) /
+                       (T)(next_i - prev_i);
+                T d1 = (input[returnIndex(i, next_j, k, dims)] -
+                        input[returnIndex(i, prev_j, k, dims)]) /
+                       (T)(next_j - prev_j);
+                T d2 = (input[returnIndex(i, j, next_k, dims)] -
+                        input[returnIndex(i, j, prev_k, dims)]) /
+                       (T)(next_k - prev_k);
+                if (axis < 0)
+                {
+                    data[3 * index] = d0;
+                    data[3 * index + 1] = d1;
+                    data[3 * index + 2] = d2;
+                }
+                else
+                {
+                    data[index] = (axis == 0) ? d0 : (axis == 1) ? d1 : d2;
+                }
+                index++;
+            }
+        }
+    }
+    return data;
+}
+
+/* ---- minimal iterative radix-2 Cooley-Tukey FFT (power-of-two length) ---- */
+inline bool isPow2(size_t n) { return n && ((n & (n - 1)) == 0); }
+
+inline void fft1d(std::complex<double> *a, size_t n)
+{
+    for (size_t i = 1, j = 0; i < n; ++i)
+    {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1)
+            j ^= bit;
+        j ^= bit;
+        if (i < j)
+            std::swap(a[i], a[j]);
+    }
+    for (size_t len = 2; len <= n; len <<= 1)
+    {
+        double ang = -2.0 * M_PI / (double)len; // forward transform (numpy convention)
+        std::complex<double> wlen(std::cos(ang), std::sin(ang));
+        for (size_t i = 0; i < n; i += len)
+        {
+            std::complex<double> w(1.0, 0.0);
+            for (size_t k = 0; k < len / 2; ++k)
+            {
+                std::complex<double> u = a[i + k];
+                std::complex<double> v = a[i + k + len / 2] * w;
+                a[i + k] = u + v;
+                a[i + k + len / 2] = u - v;
+                w *= wlen;
+            }
+        }
+    }
+}
+
+// forward 3D FFT of a complex cube, dims (d0,d1,d2) row-major, in place
+inline void fft3d(std::vector<std::complex<double>> &a, const size_t dims[3])
+{
+    size_t d0 = dims[0], d1 = dims[1], d2 = dims[2];
+    for (size_t i = 0; i < d0 * d1; ++i) // axis 2 (contiguous)
+        fft1d(&a[i * d2], d2);
+    std::vector<std::complex<double>> line;
+    line.resize(d1); // axis 1 (stride d2)
+    for (size_t i0 = 0; i0 < d0; ++i0)
+        for (size_t i2 = 0; i2 < d2; ++i2)
+        {
+            for (size_t i1 = 0; i1 < d1; ++i1)
+                line[i1] = a[(i0 * d1 + i1) * d2 + i2];
+            fft1d(line.data(), d1);
+            for (size_t i1 = 0; i1 < d1; ++i1)
+                a[(i0 * d1 + i1) * d2 + i2] = line[i1];
+        }
+    line.resize(d0); // axis 0 (stride d1*d2)
+    for (size_t i1 = 0; i1 < d1; ++i1)
+        for (size_t i2 = 0; i2 < d2; ++i2)
+        {
+            for (size_t i0 = 0; i0 < d0; ++i0)
+                line[i0] = a[(i0 * d1 + i1) * d2 + i2];
+            fft1d(line.data(), d0);
+            for (size_t i0 = 0; i0 < d0; ++i0)
+                a[(i0 * d1 + i1) * d2 + i2] = line[i0];
+        }
+}
+
+// number of integer wavenumber shells produced by ApplySpectrum
+inline size_t spectrumBins(const size_t dims[3])
+{
+    size_t nmax = std::max(dims[0], std::max(dims[1], dims[2]));
+    return (size_t)std::lround(std::sqrt(3.0) * (double)(nmax / 2)) + 1;
+}
+
+/* Radially-binned kinetic-energy spectrum E(k) of a velocity field, computed by
+ * a global 3D FFT.  E(k) = 0.5 * sum_{round|kvec|=k} (|ux^|^2+|uy^|^2+|uz^|^2)/N^2
+ * so that sum_k E(k) = <0.5|u|^2> (Parseval). Requires power-of-two, and (like
+ * the mean reduction) is a per-writer-block global operation. */
+template <class T>
+double *ApplySpectrum(const T *ux, const T *uy, const T *uz, const size_t dims[3])
+{
+    size_t d0 = dims[0], d1 = dims[1], d2 = dims[2];
+    size_t N = d0 * d1 * d2;
+    size_t nbins = spectrumBins(dims);
+    double *ek = (double *)malloc(nbins * sizeof(double));
+    if (ek == nullptr)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "ApplySpectrum",
+                                             "Error allocating memory for the derived variable");
+    for (size_t b = 0; b < nbins; ++b)
+        ek[b] = 0.0;
+
+    std::vector<std::complex<double>> cx(N), cy(N), cz(N);
+    for (size_t i = 0; i < N; ++i)
+    {
+        cx[i] = (double)ux[i];
+        cy[i] = (double)uy[i];
+        cz[i] = (double)uz[i];
+    }
+    fft3d(cx, dims);
+    fft3d(cy, dims);
+    fft3d(cz, dims);
+
+    double invN2 = 1.0 / ((double)N * (double)N);
+    for (size_t i0 = 0; i0 < d0; ++i0)
+    {
+        double f0 = (i0 <= d0 / 2) ? (double)i0 : (double)i0 - (double)d0;
+        for (size_t i1 = 0; i1 < d1; ++i1)
+        {
+            double f1 = (i1 <= d1 / 2) ? (double)i1 : (double)i1 - (double)d1;
+            for (size_t i2 = 0; i2 < d2; ++i2)
+            {
+                double f2 = (i2 <= d2 / 2) ? (double)i2 : (double)i2 - (double)d2;
+                size_t idx = (i0 * d1 + i1) * d2 + i2;
+                double p = 0.5 * (std::norm(cx[idx]) + std::norm(cy[idx]) + std::norm(cz[idx])) *
+                           invN2;
+                long b = std::lround(std::sqrt(f0 * f0 + f1 * f1 + f2 * f2));
+                if (b < 0)
+                    b = 0;
+                if ((size_t)b >= nbins)
+                    b = (long)nbins - 1;
+                ek[b] += p;
+            }
+        }
+    }
+    return ek;
 }
 
 }
@@ -321,9 +499,12 @@ DerivedData PowFunc(ExprData exprData)
     size_t dataSize = std::accumulate(std::begin(inputData[0].Count), std::end(inputData[0].Count),
                                       1, std::multiplies<size_t>());
     DataType inputType = inputData[0].Type;
-    size_t base = 2;
+    // NB: "base" is actually the exponent. Use a floating-point value so that
+    // non-integer exponents (e.g. pow(x, 1.5), pow(x, 0.5)) are honoured instead
+    // of being truncated to an integer.
+    double base = 2.0;
     if (exprData.Const.size() > 0)
-        base = static_cast<size_t>(std::stoull(exprData.Const[0]));
+        base = std::stod(exprData.Const[0]);
 
     if (inputType == DataType::LongDouble)
     {
@@ -750,6 +931,113 @@ DerivedData Curl3DFunc(const ExprData exprData)
     return DerivedData();
 }
 
+/* Gradient of a single 3D scalar field.
+ *   gradient(f)        -> vector field (d0,d1,d2,3): d/d(dim0), d/d(dim1), d/d(dim2)
+ *   gradient(f, axis)  -> scalar field d(f)/d(dim=axis), axis in {0,1,2} (NUM const)
+ * 2nd-order central differences in index space (see ApplyGradient). */
+DerivedData GradientFunc(ExprData exprData)
+{
+    PERFSTUBS_SCOPED_TIMER("derived::Function::GradientFunc");
+    auto inputData = exprData.Data;
+    auto type = exprData.OutType;
+    if (inputData.size() != 1)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "GradientFunc",
+                                             "Gradient expects exactly one 3D operand");
+    if (inputData[0].Count.size() != 3)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "GradientFunc",
+                                             "Gradient is only implemented for 3D arrays");
+    int axis = -1;
+    if (!exprData.Const.empty())
+    {
+        axis = std::stoi(exprData.Const[0]);
+        if (axis < 0 || axis > 2)
+            helper::Throw<std::invalid_argument>("Derived", "Function", "GradientFunc",
+                                                 "Gradient axis constant must be 0, 1 or 2");
+    }
+    size_t dims[3] = {inputData[0].Count[0], inputData[0].Count[1], inputData[0].Count[2]};
+    DerivedData grad;
+    grad.Data = NULL;
+#define declare_type_grad(T)                                                                       \
+    if (type == helper::GetDataType<T>())                                                          \
+    {                                                                                              \
+        grad.Data = detail::ApplyGradient((T *)inputData[0].Data, dims, axis);                     \
+        return grad;                                                                               \
+    }
+    ADIOS2_FOREACH_ATTRIBUTE_PRIMITIVE_STDTYPE_1ARG(declare_type_grad)
+    helper::Throw<std::invalid_argument>("Derived", "Function", "GradientFunc",
+                                         "Invalid variable types");
+    return DerivedData();
+}
+
+/* Arithmetic mean (reduction) of a field to a single value, per writer block.
+ * Note: under MPI decomposition this is a per-block mean; a global mean requires
+ * a size-weighted combine of the per-block values on the reader side. */
+DerivedData MeanFunc(ExprData exprData)
+{
+    PERFSTUBS_SCOPED_TIMER("derived::Function::MeanFunc");
+    auto inputData = exprData.Data;
+    auto type = exprData.OutType;
+    if (inputData.size() != 1)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "MeanFunc",
+                                             "Mean expects exactly one operand");
+    size_t dataSize = std::accumulate(std::begin(inputData[0].Count), std::end(inputData[0].Count),
+                                      1, std::multiplies<size_t>());
+    DerivedData out;
+    out.Data = NULL;
+#define declare_type_mean(T)                                                                       \
+    if (type == helper::GetDataType<T>())                                                          \
+    {                                                                                              \
+        T *val = (T *)malloc(sizeof(T));                                                           \
+        if (val == nullptr)                                                                        \
+            helper::Throw<std::invalid_argument>("Derived", "Function", "MeanFunc",                \
+                                                 "Error allocating memory");                       \
+        double acc = 0.0;                                                                          \
+        T *in = (T *)inputData[0].Data;                                                            \
+        for (size_t i = 0; i < dataSize; i++)                                                      \
+            acc += (double)in[i];                                                                  \
+        val[0] = (T)(acc / (double)dataSize);                                                      \
+        out.Data = (void *)val;                                                                    \
+        return out;                                                                                \
+    }
+    ADIOS2_FOREACH_ATTRIBUTE_PRIMITIVE_STDTYPE_1ARG(declare_type_mean)
+    helper::Throw<std::invalid_argument>("Derived", "Function", "MeanFunc",
+                                         "Invalid variable types");
+    return DerivedData();
+}
+
+/* Radially-binned kinetic-energy spectrum E(k) via a global 3D FFT.
+ * spectrum(ux,uy,uz) -> 1D array of length spectrumBins(dims). */
+DerivedData SpectrumFunc(ExprData exprData)
+{
+    PERFSTUBS_SCOPED_TIMER("derived::Function::SpectrumFunc");
+    auto inputData = exprData.Data;
+    if (inputData.size() != 3)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "SpectrumFunc",
+                                             "spectrum expects 3 operands (ux, uy, uz)");
+    if (inputData[0].Count.size() != 3)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "SpectrumFunc",
+                                             "spectrum is only implemented for 3D arrays");
+    size_t dims[3] = {inputData[0].Count[0], inputData[0].Count[1], inputData[0].Count[2]};
+    if (!detail::isPow2(dims[0]) || !detail::isPow2(dims[1]) || !detail::isPow2(dims[2]))
+        helper::Throw<std::invalid_argument>("Derived", "Function", "SpectrumFunc",
+                                             "spectrum requires power-of-two dimensions");
+    // input velocity type (output is always double energy)
+    auto type = inputData[0].Type;
+    DerivedData out;
+    out.Data = NULL;
+#define declare_type_spec(T)                                                                       \
+    if (type == helper::GetDataType<T>())                                                          \
+    {                                                                                              \
+        out.Data = detail::ApplySpectrum((T *)inputData[0].Data, (T *)inputData[1].Data,           \
+                                         (T *)inputData[2].Data, dims);                            \
+        return out;                                                                                \
+    }
+    ADIOS2_FOREACH_ATTRIBUTE_PRIMITIVE_STDTYPE_1ARG(declare_type_spec)
+    helper::Throw<std::invalid_argument>("Derived", "Function", "SpectrumFunc",
+                                         "Invalid variable types");
+    return DerivedData();
+}
+
 /* Functions that return output dimensions
  * Input: A list of variable dimensions (start, count, shape)
  * Output: (start, count, shape) of the output operation */
@@ -871,6 +1159,53 @@ std::tuple<Dims, Dims, Dims> CurlDimsFunc(std::vector<std::tuple<Dims, Dims, Dim
     std::get<1>(output).push_back(3);
     std::get<2>(output).push_back(3);
     return output;
+}
+
+// gradient(f) adds a trailing component dim of size 3; gradient(f, axis) (a NUM
+// constant is present) keeps the scalar input dimensions.
+std::tuple<Dims, Dims, Dims> GradDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                          bool constants)
+{
+    if (input.size() != 1)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "GradDimsFunc",
+                                             "Gradient expects exactly one operand");
+    if (constants)
+        return input[0];
+    std::tuple<Dims, Dims, Dims> output = input[0];
+    std::get<0>(output).push_back(0);
+    std::get<1>(output).push_back(3);
+    std::get<2>(output).push_back(3);
+    return output;
+}
+
+// mean reduces the whole (local) field to a single value.
+std::tuple<Dims, Dims, Dims> MeanDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                          bool constants)
+{
+    (void)constants;
+    if (input.size() != 1)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "MeanDimsFunc",
+                                             "Mean expects exactly one operand");
+    Dims outStart{0}, outCount{1}, outShape{1};
+    return {outStart, outCount, outShape};
+}
+
+// spectrum reduces a 3-component vector field to a 1D E(k) array.
+std::tuple<Dims, Dims, Dims> SpectrumDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                              bool constants)
+{
+    (void)constants;
+    if (input.size() != 3)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "SpectrumDimsFunc",
+                                             "spectrum expects 3 operands (ux, uy, uz)");
+    Dims count = std::get<1>(input[0]);
+    if (count.size() != 3)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "SpectrumDimsFunc",
+                                             "spectrum is only implemented for 3D arrays");
+    size_t dims[3] = {count[0], count[1], count[2]};
+    size_t nb = detail::spectrumBins(dims);
+    Dims outStart{0}, outCount{nb}, outShape{nb};
+    return {outStart, outCount, outShape};
 }
 
 DataType SameTypeFunc(DataType input) { return input; }

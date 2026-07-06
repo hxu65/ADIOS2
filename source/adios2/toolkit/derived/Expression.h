@@ -30,7 +30,10 @@ enum ExpressionOperator
     OP_ATAN,
     OP_MAGN,
     OP_CROSS,
-    OP_CURL
+    OP_CURL,
+    OP_GRAD,
+    OP_MEAN,
+    OP_SPECTRUM
 };
 }
 

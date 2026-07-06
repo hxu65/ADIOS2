@@ -39,7 +39,10 @@ const std::map<ExpressionOperator, OperatorProperty> op_property = {
     {ExpressionOperator::OP_ATAN, {"ATAN", false}},
     {ExpressionOperator::OP_MAGN, {"MAGNITUDE", false}},
     {ExpressionOperator::OP_CROSS, {"CROSS", false}},
-    {ExpressionOperator::OP_CURL, {"CURL", false}}};
+    {ExpressionOperator::OP_CURL, {"CURL", false}},
+    {ExpressionOperator::OP_GRAD, {"GRADIENT", false}},
+    {ExpressionOperator::OP_MEAN, {"MEAN", false}},
+    {ExpressionOperator::OP_SPECTRUM, {"SPECTRUM", false}}};
 
 const std::map<std::string, ExpressionOperator> string_to_op = {
     {"ALIAS", ExpressionOperator::OP_ALIAS}, /* Parser-use only */
@@ -55,7 +58,9 @@ const std::map<std::string, ExpressionOperator> string_to_op = {
     {"TAN", ExpressionOperator::OP_TAN},           {"ASIN", ExpressionOperator::OP_ASIN},
     {"ACOS", ExpressionOperator::OP_ACOS},         {"ATAN", ExpressionOperator::OP_ATAN},
     {"MAGNITUDE", ExpressionOperator::OP_MAGN},    {"CROSS", ExpressionOperator::OP_CROSS},
-    {"CURL", ExpressionOperator::OP_CURL}};
+    {"CURL", ExpressionOperator::OP_CURL},         {"GRADIENT", ExpressionOperator::OP_GRAD},
+    {"GRAD", ExpressionOperator::OP_GRAD},         {"MEAN", ExpressionOperator::OP_MEAN},
+    {"SPECTRUM", ExpressionOperator::OP_SPECTRUM}, {"FFT", ExpressionOperator::OP_SPECTRUM}};
 
 inline std::string get_op_name(ExpressionOperator op) { return op_property.at(op).name; }
 
@@ -161,7 +166,11 @@ std::map<adios2::detail::ExpressionOperator, OperatorFunctions> OpFunctions = {
     {adios2::detail::ExpressionOperator::OP_MAGN,
      {MagnitudeFunc, SameDimsWithAgrFunc, SameTypeFunc}},
     {adios2::detail::ExpressionOperator::OP_CROSS, {Cross3DFunc, Cross3DDimsFunc, SameTypeFunc}},
-    {adios2::detail::ExpressionOperator::OP_CURL, {Curl3DFunc, CurlDimsFunc, SameTypeFunc}}};
+    {adios2::detail::ExpressionOperator::OP_CURL, {Curl3DFunc, CurlDimsFunc, SameTypeFunc}},
+    {adios2::detail::ExpressionOperator::OP_GRAD, {GradientFunc, GradDimsFunc, SameTypeFunc}},
+    {adios2::detail::ExpressionOperator::OP_MEAN, {MeanFunc, MeanDimsFunc, SameTypeFunc}},
+    {adios2::detail::ExpressionOperator::OP_SPECTRUM,
+     {SpectrumFunc, SpectrumDimsFunc, FloatTypeFunc}}};
 
 Expression::Expression(std::string string_exp)
 : m_Operator(adios2::detail::ExpressionOperator::OP_NULL), m_Shape({0}), m_Start({0}), m_Count({0}),
