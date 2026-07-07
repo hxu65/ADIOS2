@@ -42,6 +42,7 @@ const std::map<ExpressionOperator, OperatorProperty> op_property = {
     {ExpressionOperator::OP_CURL, {"CURL", false}},
     {ExpressionOperator::OP_GRAD, {"GRADIENT", false}},
     {ExpressionOperator::OP_MEAN, {"MEAN", false}},
+    {ExpressionOperator::OP_VARIANCE, {"VARIANCE", false}},
     {ExpressionOperator::OP_SPECTRUM, {"SPECTRUM", false}}};
 
 const std::map<std::string, ExpressionOperator> string_to_op = {
@@ -60,6 +61,7 @@ const std::map<std::string, ExpressionOperator> string_to_op = {
     {"MAGNITUDE", ExpressionOperator::OP_MAGN},    {"CROSS", ExpressionOperator::OP_CROSS},
     {"CURL", ExpressionOperator::OP_CURL},         {"GRADIENT", ExpressionOperator::OP_GRAD},
     {"GRAD", ExpressionOperator::OP_GRAD},         {"MEAN", ExpressionOperator::OP_MEAN},
+    {"VARIANCE", ExpressionOperator::OP_VARIANCE}, {"VAR", ExpressionOperator::OP_VARIANCE},
     {"SPECTRUM", ExpressionOperator::OP_SPECTRUM}, {"FFT", ExpressionOperator::OP_SPECTRUM}};
 
 inline std::string get_op_name(ExpressionOperator op) { return op_property.at(op).name; }
@@ -169,6 +171,8 @@ std::map<adios2::detail::ExpressionOperator, OperatorFunctions> OpFunctions = {
     {adios2::detail::ExpressionOperator::OP_CURL, {Curl3DFunc, CurlDimsFunc, SameTypeFunc}},
     {adios2::detail::ExpressionOperator::OP_GRAD, {GradientFunc, GradDimsFunc, SameTypeFunc}},
     {adios2::detail::ExpressionOperator::OP_MEAN, {MeanFunc, MeanDimsFunc, SameTypeFunc}},
+    {adios2::detail::ExpressionOperator::OP_VARIANCE,
+     {VarianceFunc, VarianceDimsFunc, FloatTypeFunc}},
     {adios2::detail::ExpressionOperator::OP_SPECTRUM,
      {SpectrumFunc, SpectrumDimsFunc, FloatTypeFunc}}};
 

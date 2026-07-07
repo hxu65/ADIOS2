@@ -1005,6 +1005,76 @@ DerivedData MeanFunc(ExprData exprData)
     return DerivedData();
 }
 
+/* Population variance (reduction) of a field to a single value, per writer block.
+ *   Var = (1/N) * sum_i (x_i - mean)^2
+ * computed with a numerically stable two-pass algorithm in double precision.
+ * Note: like MeanFunc this is a per-writer-block statistic. Under MPI
+ * decomposition a true global variance requires combining the per-block
+ * (mean, variance, count) triples on the reader side (parallel/pooled variance).
+ * Output is floating point (double, or long double for long double input)
+ * regardless of the input type. */
+DerivedData VarianceFunc(ExprData exprData)
+{
+    PERFSTUBS_SCOPED_TIMER("derived::Function::VarianceFunc");
+    auto inputData = exprData.Data;
+    if (inputData.size() != 1)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "VarianceFunc",
+                                             "Variance expects exactly one operand");
+    size_t dataSize = std::accumulate(std::begin(inputData[0].Count), std::end(inputData[0].Count),
+                                      1, std::multiplies<size_t>());
+    DataType inputType = inputData[0].Type;
+    DerivedData out;
+    out.Data = NULL;
+
+    if (inputType == DataType::LongDouble)
+    {
+        long double *val = (long double *)malloc(sizeof(long double));
+        if (val == nullptr)
+            helper::Throw<std::invalid_argument>("Derived", "Function", "VarianceFunc",
+                                                 "Error allocating memory");
+        long double *in = (long double *)inputData[0].Data;
+        long double mean = 0.0L;
+        for (size_t i = 0; i < dataSize; i++)
+            mean += in[i];
+        mean /= (long double)dataSize;
+        long double acc = 0.0L;
+        for (size_t i = 0; i < dataSize; i++)
+        {
+            long double d = in[i] - mean;
+            acc += d * d;
+        }
+        val[0] = (dataSize > 0) ? acc / (long double)dataSize : 0.0L;
+        out.Data = (void *)val;
+        return out;
+    }
+#define declare_type_variance(T)                                                                   \
+    else if (inputType == helper::GetDataType<T>())                                                \
+    {                                                                                              \
+        double *val = (double *)malloc(sizeof(double));                                            \
+        if (val == nullptr)                                                                        \
+            helper::Throw<std::invalid_argument>("Derived", "Function", "VarianceFunc",            \
+                                                 "Error allocating memory");                       \
+        T *in = (T *)inputData[0].Data;                                                            \
+        double mean = 0.0;                                                                         \
+        for (size_t i = 0; i < dataSize; i++)                                                      \
+            mean += (double)in[i];                                                                 \
+        mean /= (double)dataSize;                                                                  \
+        double acc = 0.0;                                                                          \
+        for (size_t i = 0; i < dataSize; i++)                                                      \
+        {                                                                                          \
+            double d = (double)in[i] - mean;                                                       \
+            acc += d * d;                                                                          \
+        }                                                                                          \
+        val[0] = (dataSize > 0) ? acc / (double)dataSize : 0.0;                                    \
+        out.Data = (void *)val;                                                                    \
+        return out;                                                                                \
+    }
+    ADIOS2_FOREACH_ATTRIBUTE_PRIMITIVE_STDTYPE_1ARG(declare_type_variance)
+    helper::Throw<std::invalid_argument>("Derived", "Function", "VarianceFunc",
+                                         "Invalid variable types");
+    return DerivedData();
+}
+
 /* Radially-binned kinetic-energy spectrum E(k) via a global 3D FFT.
  * spectrum(ux,uy,uz) -> 1D array of length spectrumBins(dims). */
 DerivedData SpectrumFunc(ExprData exprData)
@@ -1186,6 +1256,18 @@ std::tuple<Dims, Dims, Dims> MeanDimsFunc(std::vector<std::tuple<Dims, Dims, Dim
     if (input.size() != 1)
         helper::Throw<std::invalid_argument>("Derived", "Function", "MeanDimsFunc",
                                              "Mean expects exactly one operand");
+    Dims outStart{0}, outCount{1}, outShape{1};
+    return {outStart, outCount, outShape};
+}
+
+// variance, like mean, reduces the whole (local) field to a single value.
+std::tuple<Dims, Dims, Dims> VarianceDimsFunc(std::vector<std::tuple<Dims, Dims, Dims>> input,
+                                              bool constants)
+{
+    (void)constants;
+    if (input.size() != 1)
+        helper::Throw<std::invalid_argument>("Derived", "Function", "VarianceDimsFunc",
+                                             "Variance expects exactly one operand");
     Dims outStart{0}, outCount{1}, outShape{1};
     return {outStart, outCount, outShape};
 }

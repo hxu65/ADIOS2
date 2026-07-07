@@ -9,12 +9,13 @@ whose data is computed from the operands via the operators below.
 
 ## Summary of additions
 
-Three new operators were added, plus a correctness fix to the existing `POW` operator.
+Four new operators were added, plus a correctness fix to the existing `POW` operator.
 
 | Operator | Aliases | Operands | Output |
 |----------|---------|----------|--------|
 | `GRADIENT` | `GRAD` | 1 scalar 3D field (+ optional axis constant) | Vector field (`d0,d1,d2,3`), or scalar partial derivative |
 | `MEAN` | — | 1 field (any dims) | Single scalar value (per writer block) |
+| `VARIANCE` | `VAR` | 1 field (any dims) | Single scalar value (per writer block), floating point |
 | `SPECTRUM` | `FFT` | 3 fields (`ux, uy, uz`), 3D, power-of-two dims | 1D radially-binned energy spectrum `E(k)` |
 
 ## Operators
@@ -41,6 +42,28 @@ Arithmetic mean (reduction) of a field to a single scalar value.
 > **Note:** Under MPI decomposition this is a **per-writer-block** mean. A true
 > global mean requires a size-weighted combine of the per-block values on the reader
 > side. Accumulation is done in `double` precision regardless of input type.
+
+### `VARIANCE(f)` / `VAR(f)`
+
+Population variance (reduction) of a field to a single scalar value:
+
+```
+VAR(f) = (1/N) * sum_i (f_i - mean)^2
+```
+
+computed with a numerically stable **two-pass** algorithm (mean first, then sum of
+squared deviations) accumulated in `double` precision. Divides by `N` (population
+variance), matching the reduction convention of `MEAN`.
+
+- Output is floating point — `double` for all inputs, `long double` for `long double`
+  input — regardless of the input type, so integer fields yield a fractional variance.
+- Like `MEAN`, this is a **per-writer-block** statistic. Under MPI decomposition a true
+  global variance requires a size-weighted combine of the per-block `(mean, variance,
+  count)` triples on the reader side (parallel / pooled-variance formula).
+
+Intended use: a cheap statistical **trigger signal**. For example, monitoring
+`VARIANCE(V)` of a Gray-Scott reaction-diffusion field detects the transition from the
+perturbation-dominated phase to the reactive-pattern phase as a sharp rise in variance.
 
 ### `SPECTRUM(ux, uy, uz)` / `FFT(ux, uy, uz)`
 
